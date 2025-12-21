@@ -372,7 +372,12 @@ Think step by step. Provide reasoning in <think>...</think> tags and final answe
     print("\n" + "=" * 80)
     print("[COMPLETE] Training finished! Saving final model...")
     training_client.save_state(name="final")
-    print("[COMPLETE] ✓ Final model saved")
+    print("[COMPLETE] ✓ Training state saved (for resuming training)")
+    
+    # Save sampler-compatible weights for inference/evaluation
+    sampler_path = training_client.save_weights_for_sampler(name="final").result().path
+    print(f"[COMPLETE] ✓ Sampler weights saved: {sampler_path}")
+    print("[COMPLETE] Use this path in eval.py for evaluation")
     print("=" * 80)
 
 
