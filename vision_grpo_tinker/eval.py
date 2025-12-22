@@ -1,9 +1,3 @@
-"""
-Evaluation Script for Visual R1 Model
-======================================
-
-Tests the trained model on the Geometry3K test/validation set.
-"""
 
 import os
 import io
