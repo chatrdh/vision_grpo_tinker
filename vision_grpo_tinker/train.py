@@ -35,7 +35,7 @@ CONFIG = {
     "model_id": "Qwen/Qwen3-VL-30B-A3B-Instruct",
     "output_dir": "./visual_r1_checkpoints",
     # GRPO Hyperparameters
-    "group_size":4,
+    "group_size": 4,
     "batch_size": 4,           # More stable gradient estimates
     "max_steps": 500,          # Longer training for convergence
     "learning_rate": 1e-6,
@@ -155,11 +155,7 @@ def train():
                 prompt = f"""<|im_start|>user
 <|vision_start|><|vision_end|>{clean_text}
 
-Solve this step by step. You MUST use this EXACT format:
-<think>
-[your step-by-step reasoning here]
-</think>
-<answer>[your final numerical answer]</answer><|im_end|>
+Think step by step. Provide reasoning in <think>...</think> tags and final answer in <answer>...</answer> tags.<|im_end|>
 <|im_start|>assistant
 <think>"""
                 
