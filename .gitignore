@@ -1,2 +1,5 @@
 /.env
 /.venv
+/wandb
+/visual_r1_checkpoints
+/__pycache__

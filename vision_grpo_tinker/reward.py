@@ -81,7 +81,7 @@ def visual_cot_reward_fn(completions, ground_truths, **kwargs):
     The Core Reward Function for Visual R1.
     
     Components:
-    1. Format Reward (+0.1): Did the model use <think> and <answer> tags?
+    1. Format Reward (+0.3): Did the model use <think>...</think> and <answer>...</answer> tags properly?
     2. Accuracy Reward (+1.0): Is the math mathematically equivalent to the truth?
     3. Visual Reward (+0.2): Did the model describe image features? (Gated by Accuracy)
     
@@ -101,12 +101,16 @@ def visual_cot_reward_fn(completions, ground_truths, **kwargs):
         think_content = extract_xml_tag(pred_text, "think")
         answer_content = extract_xml_tag(pred_text, "answer")
         
-        # We strictly require the tags to exist.
-        if think_content and answer_content:
-            score += 0.1
+        # We strictly require BOTH opening and closing tags for proper format
+        # Check for </think> explicitly - the model often forgets to close it
+        has_think_close = "</think>" in pred_text
+        
+        if think_content and answer_content and has_think_close:
+            score += 0.3  # Full format reward for proper structure
+        elif answer_content:
+            score += 0.05  # Minimal credit if answer tag exists but format is broken
         else:
-            # If tags are missing, the chain of thought is broken. 
-            # We return 0.0 immediately to penalize this behavior.
+            # If no answer tags at all, penalize heavily
             rewards.append(0.0)
             continue
 
@@ -177,18 +181,23 @@ def visual_cot_reward_fn_detailed(completions, ground_truths, lenient=True, **kw
         think_content = extract_xml_tag(pred_text, "think")
         answer_content = extract_xml_tag(pred_text, "answer")
         
-        # Check for proper format
-        has_proper_format = think_content and answer_content
+        # Check for proper format - require BOTH opening and closing tags
+        has_think_close = "</think>" in pred_text
+        has_proper_format = think_content and answer_content and has_think_close
         
         if has_proper_format:
-            format_reward = 0.1
+            format_reward = 0.3  # Full reward for proper structure
+            extraction_method = "answer_tag"
+        elif think_content and answer_content:
+            # Has both tags but missing </think> closing
+            format_reward = 0.1  # Reduced reward
             extraction_method = "answer_tag"
         elif lenient:
             # Try flexible extraction
             answer_content, extraction_method = extract_answer_flexible(pred_text)
             # Partial format credit if we have some structure
             if "<think>" in pred_text:
-                format_reward = 0.05  # Partial credit for trying
+                format_reward = 0.02  # Minimal credit for trying
                 # Use everything after <think> as thinking content
                 think_start = pred_text.find("<think>") + len("<think>")
                 think_content = pred_text[think_start:]

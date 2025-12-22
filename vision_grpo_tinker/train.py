@@ -15,6 +15,7 @@ import io
 import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
+import wandb
 
 # --- Import Local Modules ---
 from dataset import Geometry3K_PandasDataset, visual_r1_collate_fn
@@ -35,54 +36,33 @@ CONFIG = {
     "output_dir": "./visual_r1_checkpoints",
     # GRPO Hyperparameters
     "group_size": 8,
-    "batch_size": 2,
-    "max_steps": 200,
+    "batch_size": 4,           # More stable gradient estimates
+    "max_steps": 500,          # Longer training for convergence
     "learning_rate": 1e-6,
-    "temperature": 1.0,
-    "max_new_tokens": 512,
+    "temperature": 0.9,        # Slightly focused exploration
+    "max_new_tokens": 768,     # More room for chain-of-thought
     "clip_epsilon": 0.2,
     "beta": 0.04,
     # LoRA Config
     "lora_rank": 16,
+    # Wandb Config
+    "wandb_project": "visual-r1-grpo",
+    "wandb_run_name": None,  # Auto-generated if None
 }
-
-
-def build_vlm_prompt(image_pil, problem_text: str) -> tuple[types.ModelInput, list[int]]:
-    """
-    Build a VLM prompt with image for Qwen3-VL.
-    
-    Returns:
-        model_input: Tinker ModelInput with image and text chunks
-        prompt_tokens: List of token ids (for tracking prompt length)
-    """
-    # Convert PIL image to bytes
-    img_buffer = io.BytesIO()
-    image_pil.save(img_buffer, format='PNG')
-    image_bytes = img_buffer.getvalue()
-    
-    # Build the prompt text with Qwen3-VL special tokens
-    # Format: <|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>question<|im_end|>\n<|im_start|>assistant\n<think>
-    prompt_text = f"""<|im_start|>user
-<|vision_start|><|image_pad|><|vision_end|>{problem_text}
-
-Think step by step and provide your answer in <think>...</think><answer>...</answer> format.<|im_end|>
-<|im_start|>assistant
-<think>"""
-    
-    # Create ModelInput with image chunk
-    model_input = types.ModelInput(chunks=[
-        types.EncodedTextChunk(tokens=[]),  # Will be filled by Tinker
-        types.ImageChunk(data=image_bytes, format="png"),
-        types.EncodedTextChunk(tokens=[]),  # Will be filled by Tinker
-    ])
-    
-    return model_input, prompt_text
 
 
 def train():
     print("=" * 80)
     print("VISUAL R1 TRAINING - GRPO with Tinker API")
     print("=" * 80)
+    
+    # Initialize wandb
+    wandb.init(
+        project=CONFIG["wandb_project"],
+        name=CONFIG["wandb_run_name"],
+        config=CONFIG,
+    )
+    print(f"[INIT] ✓ Wandb initialized: {wandb.run.name}")
     
     # 1. Initialize Dataset
     print(f"\n[INIT] Loading Dataset from {CONFIG['parquet_path']}...")
@@ -175,7 +155,11 @@ def train():
                 prompt = f"""<|im_start|>user
 <|vision_start|><|vision_end|>{clean_text}
 
-Think step by step. Provide reasoning in <think>...</think> tags and final answer in <answer>...</answer> tags.<|im_end|>
+Solve this step by step. You MUST use this EXACT format:
+<think>
+[your step-by-step reasoning here]
+</think>
+<answer>[your final numerical answer]</answer><|im_end|>
 <|im_start|>assistant
 <think>"""
                 
@@ -362,6 +346,22 @@ Think step by step. Provide reasoning in <think>...</think> tags and final answe
             print(f"  Format Rate: {n_formatted}/{n_samples} ({100*n_formatted/n_samples:.1f}%)")
             print(f"  ════════════════════════════════════════════════\n")
             
+            # --- Log to wandb ---
+            wandb.log({
+                "step": step,
+                "reward/total": avg_reward,
+                "reward/format": avg_format,
+                "reward/accuracy": avg_accuracy,
+                "reward/visual": avg_visual,
+                "reward/avg_keywords": avg_keywords,
+                "rates/accuracy": n_correct / n_samples,
+                "rates/format": n_formatted / n_samples,
+                "rates/visual": n_with_visual / n_samples,
+                "samples/total": n_samples,
+                "samples/correct": n_correct,
+                "samples/formatted": n_formatted,
+            })
+            
             # --- Checkpoint ---
             if step % 50 == 0:
                 print(f"\n[CHECKPOINT] Saving at step {step}...")
@@ -379,6 +379,9 @@ Think step by step. Provide reasoning in <think>...</think> tags and final answe
     print(f"[COMPLETE] ✓ Sampler weights saved: {sampler_path}")
     print("[COMPLETE] Use this path in eval.py for evaluation")
     print("=" * 80)
+    
+    # Finish wandb run
+    wandb.finish()
 
 
 if __name__ == "__main__":
