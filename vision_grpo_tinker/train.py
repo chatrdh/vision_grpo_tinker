@@ -35,7 +35,7 @@ CONFIG = {
     "model_id": "Qwen/Qwen3-VL-30B-A3B-Instruct",
     "output_dir": "./visual_r1_checkpoints",
     # GRPO Hyperparameters
-    "group_size": 8,
+    "group_size":4,
     "batch_size": 4,           # More stable gradient estimates
     "max_steps": 500,          # Longer training for convergence
     "learning_rate": 1e-6,
