@@ -203,7 +203,7 @@ def train():
         checkpoint_name = f"checkpoint_{resume_step}"
         print(f"\n[RESUME] Loading checkpoint: {checkpoint_name}...")
         try:
-            training_client.load_state(name=checkpoint_name)
+            training_client.load_state_with_optimizer("tinker://db12b8ca-e823-552c-8d24-03b9b971df77:train:0/weights/checkpoint_350")
             print(f"[RESUME] ✓ Resumed from step {resume_step}")
         except Exception as e:
             print(f"[ERROR] Failed to load checkpoint {checkpoint_name}: {e}")
