@@ -42,12 +42,12 @@ CONFIG = {
     "learning_rate": 1e-6,
     "temperature": 0.9,        # Slightly focused exploration
     "max_new_tokens": 768,     # More room for chain-of-thought
-    "clip_epsilon": 0.2,       # PPO-style clipping epsilon
+    "clip_epsilon": 0.1,       # Tighter clipping for stable updates (was 0.2)
     "beta": 0.04,
     # LoRA Config
     "lora_rank": 16,
     # Resume Config
-    "resume_from_step": 350,  # Set to None or 0 to start fresh, or step number to resume
+    "resume_from_step": 0,  # Set to None or 0 to start fresh, or step number to resume
     # Wandb Config
     "wandb_project": "visual-r1-grpo-clipped",
     "wandb_run_name": None,  # Auto-generated if None
@@ -229,7 +229,7 @@ def train():
     os.makedirs(CONFIG["output_dir"], exist_ok=True)
     
     step = resume_step  # Resume from checkpoint step or start from 0
-    progress_bar = tqdm(total=CONFIG["max_steps"], desc="Training")
+    progress_bar = tqdm(total=CONFIG["max_steps"], initial=resume_step, desc="Training")
     
     while step < CONFIG["max_steps"]:
         for batch_idx, batch in enumerate(dataloader):
