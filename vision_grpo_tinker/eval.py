@@ -3,6 +3,7 @@ import os
 import io
 import torch
 from tqdm import tqdm
+import wandb
 
 # --- Import Local Modules ---
 from dataset import Geometry3K_PandasDataset
@@ -19,15 +20,22 @@ CONFIG = {
     
     # Model - use the trained checkpoint
     "model_id": "Qwen/Qwen3-VL-30B-A3B-Instruct",
-    "checkpoint_name": "tinker://a76d44a2-d232-5b91-b7d1-cfdd44f7f9ca:train:0/weights/final",
+    # For trained model eval, use tinker:// checkpoint path:
+    "checkpoint_path": "tinker://da24b91e-3d21-5c0f-969a-2d69ecbf22a0:train:0/sampler_weights/final",
+    # For baseline eval, use HuggingFace model:
+    # "checkpoint_path": "Qwen/Qwen3-VL-30B-A3B-Instruct",
     
     # Inference settings
     "num_samples": 1,  # Number of samples per question (1 for deterministic eval)
-    "max_new_tokens": 512,
+    "max_new_tokens": 768,
     "temperature": 0.0,  # Greedy decoding for eval
     
     # Batch settings
-    "max_eval_samples": 100,  # Limit for quick testing (None for full eval)
+    "max_eval_samples": 50,  # Limit for quick testing (None for full eval)
+    
+    # Wandb Config
+    "wandb_project": "visual-r1-eval",
+    "wandb_run_name": "trained_model_eval",
 }
 
 
@@ -48,6 +56,14 @@ def evaluate():
     print("=" * 80)
     print("VISUAL R1 EVALUATION")
     print("=" * 80)
+    
+    # Initialize wandb
+    wandb.init(
+        project=CONFIG["wandb_project"],
+        name=CONFIG["wandb_run_name"],
+        config=CONFIG,
+    )
+    print(f"[EVAL] \u2713 Wandb initialized: {wandb.run.name}")
     
     # 1. Download and load test data
     print(f"\n[EVAL] Loading test data...")
@@ -71,13 +87,16 @@ def evaluate():
     try:
         service_client = tinker.ServiceClient()
         
-        # Create sampling client
-        # NOTE: The checkpoint was saved with save_state() which is for resuming training.
-        # For sampling, we need a checkpoint from save_weights_for_sampler().
-        # Using base model for now - retrain with proper save to use trained weights.
-        sampling_client = service_client.create_sampling_client(
-            model_path=CONFIG['model_id']  # Base model
-        )
+        # Create sampling client - use base_model for HF models, model_path for tinker:// checkpoints
+        checkpoint = CONFIG['checkpoint_path']
+        if checkpoint.startswith("tinker://"):
+            sampling_client = service_client.create_sampling_client(
+                model_path=checkpoint
+            )
+        else:
+            sampling_client = service_client.create_sampling_client(
+                base_model=checkpoint
+            )
         
         # Get tokenizer
         tokenizer = sampling_client.get_tokenizer() if hasattr(sampling_client, 'get_tokenizer') else None
@@ -85,7 +104,7 @@ def evaluate():
             from transformers import AutoTokenizer
             tokenizer = AutoTokenizer.from_pretrained(CONFIG["model_id"], trust_remote_code=True)
         
-        print(f"[EVAL] ✓ Model loaded (checkpoint: {CONFIG['checkpoint_name']})")
+        print(f"[EVAL] ✓ Model loaded (checkpoint: {CONFIG['checkpoint_path']})")
     except Exception as e:
         print(f"[ERROR] Failed to load model: {e}")
         return
@@ -133,23 +152,33 @@ Think step by step. Provide reasoning in <think>...</think> tags and final answe
             types.EncodedTextChunk(tokens=prompt_tokens[10:]),
         ])
         
-        # Generate
+        # Generate with timeout to prevent hangs
         try:
-            result = sampling_client.sample(
+            future = sampling_client.sample(
                 prompt=model_input,
                 sampling_params=sampling_params,
                 num_samples=CONFIG["num_samples"]
-            ).result()
+            )
+            result = future.result(timeout=60)  # 60 second timeout per sample
             
             for seq in result.sequences:
                 completion_text = "<think>" + tokenizer.decode(seq.tokens)
                 all_completions.append(completion_text)
                 all_ground_truths.append(ground_truth)
                 
+        except TimeoutError:
+            print(f"[WARNING] Sample {idx} timed out after 60s - skipping")
+            all_completions.append("")
+            all_ground_truths.append(ground_truth)
         except Exception as e:
             print(f"[WARNING] Sample {idx} failed: {e}")
             all_completions.append("")
             all_ground_truths.append(ground_truth)
+    
+    # Count skipped samples
+    n_skipped = sum(1 for c in all_completions if c == "")
+    if n_skipped > 0:
+        print(f"[EVAL] Note: {n_skipped} samples were skipped due to errors/timeouts")
     
     # 4. Compute metrics
     print(f"\n[EVAL] Computing metrics...")
@@ -199,6 +228,41 @@ Think step by step. Provide reasoning in <think>...</think> tags and final answe
         print(f"Correct: {reward_details['accuracy_rewards'][i] > 0}")
         print(f"Extraction: {reward_details['extraction_methods'][i]}")
         print(f"Completion: {all_completions[i][:300]}...")
+    
+    # 7. Log to wandb
+    wandb_metrics = {
+        "eval/accuracy": n_correct / n_samples,
+        "eval/format_rate": n_formatted / n_samples,
+        "eval/visual_rate": n_visual / n_samples,
+        "eval/avg_reward": avg_reward,
+        "eval/avg_accuracy_reward": avg_accuracy,
+        "eval/avg_format_reward": avg_format,
+        "eval/avg_visual_reward": avg_visual,
+        "eval/n_samples": n_samples,
+        "eval/n_correct": n_correct,
+        "eval/n_formatted": n_formatted,
+    }
+    # Add extraction method counts
+    for method, count in method_counts.items():
+        wandb_metrics[f"eval/extraction_{method}"] = count
+    
+    wandb.log(wandb_metrics)
+    
+    # Log predictions table
+    predictions_table = wandb.Table(columns=["idx", "ground_truth", "prediction", "correct", "extraction_method"])
+    for i in range(min(50, n_samples)):  # Log first 50 samples
+        predictions_table.add_data(
+            i,
+            all_ground_truths[i],
+            all_completions[i][:500],  # Truncate for table
+            reward_details['accuracy_rewards'][i] > 0,
+            reward_details['extraction_methods'][i]
+        )
+    wandb.log({"predictions": predictions_table})
+    
+    # Finish wandb run
+    wandb.finish()
+    print(f"[EVAL] ✓ Results logged to wandb")
     
     return {
         'accuracy': n_correct / n_samples,

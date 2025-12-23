@@ -76,14 +76,26 @@ def extract_answer_flexible(text):
     return None, "none"
 
 
+# --- Reward Weight Configuration ---
+# Accuracy should dominate the reward signal
+REWARD_WEIGHTS = {
+    "format_full": 0.1,      # Reduced from 0.3 - proper <think>/<answer> tags
+    "format_partial": 0.02,  # Reduced from 0.05 - only answer tag
+    "accuracy": 1.0,          # Unchanged - correct answer
+    "visual_per_keyword": 0.03,  # Reduced from 0.05
+    "visual_max": 0.15,       # Reduced from 0.2
+}
+# Total possible: 1.0 (accuracy) + 0.1 (format) + 0.15 (visual) = 1.25
+
+
 def visual_cot_reward_fn(completions, ground_truths, **kwargs):
     """
     The Core Reward Function for Visual R1.
     
-    Components:
-    1. Format Reward (+0.3): Did the model use <think>...</think> and <answer>...</answer> tags properly?
+    Components (rebalanced to emphasize accuracy):
+    1. Format Reward (+0.1): Did the model use <think>...</think> and <answer>...</answer> tags properly?
     2. Accuracy Reward (+1.0): Is the math mathematically equivalent to the truth?
-    3. Visual Reward (+0.2): Did the model describe image features? (Gated by Accuracy)
+    3. Visual Reward (+0.15 max): Did the model describe image features? (Gated by Accuracy)
     
     Args:
         completions (list[str]): The generated strings from the model.
@@ -106,9 +118,9 @@ def visual_cot_reward_fn(completions, ground_truths, **kwargs):
         has_think_close = "</think>" in pred_text
         
         if think_content and answer_content and has_think_close:
-            score += 0.3  # Full format reward for proper structure
+            score += REWARD_WEIGHTS["format_full"]  # Proper structure
         elif answer_content:
-            score += 0.05  # Minimal credit if answer tag exists but format is broken
+            score += REWARD_WEIGHTS["format_partial"]  # Only answer tag
         else:
             # If no answer tags at all, penalize heavily
             rewards.append(0.0)
@@ -120,7 +132,7 @@ def visual_cot_reward_fn(completions, ground_truths, **kwargs):
         is_correct = grade(answer_content, truth_text)
         
         if is_correct:
-            score += 1.0
+            score += REWARD_WEIGHTS["accuracy"]
             
             # --- 3. Visual Grounding Bonus (Gated) ---
             # We ONLY check for visual keywords if the answer is correct.
@@ -134,9 +146,9 @@ def visual_cot_reward_fn(completions, ground_truths, **kwargs):
                     found_keywords += 1
             
             # Bonus Logic:
-            # We cap the bonus at 0.2. 
-            # 1 keyword = +0.05, 4+ keywords = +0.20
-            visual_bonus = min(0.2, found_keywords * 0.05)
+            # We cap the bonus at 0.15 (reduced from 0.2)
+            # 1 keyword = +0.03, 5+ keywords = +0.15
+            visual_bonus = min(REWARD_WEIGHTS["visual_max"], found_keywords * REWARD_WEIGHTS["visual_per_keyword"])
             score += visual_bonus
             
         rewards.append(score)
@@ -186,11 +198,11 @@ def visual_cot_reward_fn_detailed(completions, ground_truths, lenient=True, **kw
         has_proper_format = think_content and answer_content and has_think_close
         
         if has_proper_format:
-            format_reward = 0.3  # Full reward for proper structure
+            format_reward = REWARD_WEIGHTS["format_full"]  # Full reward for proper structure
             extraction_method = "answer_tag"
         elif think_content and answer_content:
             # Has both tags but missing </think> closing
-            format_reward = 0.1  # Reduced reward
+            format_reward = REWARD_WEIGHTS["format_full"] * 0.5  # Half reward
             extraction_method = "answer_tag"
         elif lenient:
             # Try flexible extraction
@@ -219,7 +231,7 @@ def visual_cot_reward_fn_detailed(completions, ground_truths, lenient=True, **kw
             is_correct = False
         
         if is_correct:
-            accuracy_reward = 1.0
+            accuracy_reward = REWARD_WEIGHTS["accuracy"]
             
             # --- 3. Visual Grounding Bonus (Gated) ---
             if think_content:
@@ -229,7 +241,7 @@ def visual_cot_reward_fn_detailed(completions, ground_truths, lenient=True, **kw
                     if word in normalized_think:
                         found_keywords += 1
                 
-                visual_reward = min(0.2, found_keywords * 0.05)
+                visual_reward = min(REWARD_WEIGHTS["visual_max"], found_keywords * REWARD_WEIGHTS["visual_per_keyword"])
         
         total = format_reward + accuracy_reward + visual_reward
         total_rewards.append(total)
