@@ -46,6 +46,8 @@ CONFIG = {
     "beta": 0.04,
     # LoRA Config
     "lora_rank": 16,
+    # Resume Config
+    "resume_from_step": 350,  # Set to None or 0 to start fresh, or step number to resume
     # Wandb Config
     "wandb_project": "visual-r1-grpo-clipped",
     "wandb_run_name": None,  # Auto-generated if None
@@ -195,6 +197,19 @@ def train():
         print("[ERROR] Make sure TINKER_API_KEY is set")
         return
     
+    # Resume from checkpoint if specified
+    resume_step = CONFIG.get("resume_from_step") or 0
+    if resume_step > 0:
+        checkpoint_name = f"checkpoint_{resume_step}"
+        print(f"\n[RESUME] Loading checkpoint: {checkpoint_name}...")
+        try:
+            training_client.load_state(name=checkpoint_name)
+            print(f"[RESUME] ✓ Resumed from step {resume_step}")
+        except Exception as e:
+            print(f"[ERROR] Failed to load checkpoint {checkpoint_name}: {e}")
+            print("[ERROR] Starting from scratch instead...")
+            resume_step = 0
+    
     # Note: Loss function is created per-step with auxiliary data via closure
     print(f"[INIT] ✓ Clipped GRPO loss configured (epsilon={CONFIG['clip_epsilon']})")
     
@@ -213,7 +228,7 @@ def train():
     
     os.makedirs(CONFIG["output_dir"], exist_ok=True)
     
-    step = 0
+    step = resume_step  # Resume from checkpoint step or start from 0
     progress_bar = tqdm(total=CONFIG["max_steps"], desc="Training")
     
     while step < CONFIG["max_steps"]:
