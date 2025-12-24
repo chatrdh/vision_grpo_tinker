@@ -21,7 +21,7 @@ CONFIG = {
     # Model - use the trained checkpoint
     "model_id": "Qwen/Qwen3-VL-30B-A3B-Instruct",
     # For trained model eval, use tinker:// checkpoint path:
-    "checkpoint_path": "tinker://da24b91e-3d21-5c0f-969a-2d69ecbf22a0:train:0/sampler_weights/final",
+    "checkpoint_path": "tinker://363dd8ce-052d-5843-b283-3afd2d99b3b4:train:0/sampler_weights/sampler_10",
     # For baseline eval, use HuggingFace model:
     # "checkpoint_path": "Qwen/Qwen3-VL-30B-A3B-Instruct",
     
