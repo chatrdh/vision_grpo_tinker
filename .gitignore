@@ -1,5 +1,6 @@
 /.env
 /.venv
 /vision_grpo_tinker/wandb
-/vision_grpo_tinker/visual_r1_checkpoints
+/visual_r1_checkpoints
+/visual_r1_checkpoints_clipped
 /vision_grpo_tinker/__pycache__
