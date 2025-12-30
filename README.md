@@ -1,6 +1,6 @@
 # Visual R1 GRPO Training
 
-Training Vision Language Models (VLMs) on visual math reasoning tasks using Group Relative Policy Optimization (GRPO) with the [Tinker](https://tinker.build) training API.
+Training Vision Language Models (VLMs) on visual math reasoning tasks using Group Relative Policy Optimization (GRPO) with the [Tinker](https://tinker-docs.thinkingmachines.ai/) training API.
 
 ## Overview
 
