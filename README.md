@@ -115,3 +115,17 @@ Use `vision_sr1_reward_fn()` in `reward.py` for this approach.
 Training checkpoints are saved every 50 steps with:
 - `save_state()`: Full state (model + optimizer) for resuming training
 - `save_weights_for_sampler()`: Inference-optimized weights for evaluation
+
+## Evaluation Results
+
+| Metric | Baseline (Zero-Shot) | Vision-SR1  | Improvement |
+|--------|---------------------|----------------------|-------------|
+| **True Accuracy** | 64% | 72% | **+8.0%** ✅ |
+| **Reasoning Style** | *Intuitive / "Lazy"* — Tends to guess based on text labels; skips algebraic steps | *Systematic / "The Engineer"* — Explicitly states theorems (e.g., "Tangent-Secant Theorem") and solves step-by-step | High Rigor |
+| **Hallucination Rate** | *Medium* — Invents numbers or relationships when confused | *Low* — Uses the `<scan>` tag to anchor itself. Rarely invents data, though still struggles with complex 3D visual topology | Grounded |
+| **Format Discipline** | *Low* — Often outputs conversational text or inconsistent LaTeX | *High* — Learned to adhere to the `<think>` → `<answer>` format strictly, enabling automated parsing | Automated |
+| **Failure Mode** | *"Giving Up"* — Abandoning a calculation mid-way if it gets messy | *"Truncation"* — Reasoning is so thorough that it sometimes hits the token limit before finishing | Fixable |
+
+## References
+
+- [Self-Rewarding Vision-Language Model via Reasoning Decomposition](https://www.alphaxiv.org/abs/2508.19652)
