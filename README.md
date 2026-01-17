@@ -120,7 +120,7 @@ Training checkpoints are saved every 50 steps with:
 
 | Metric | Baseline (Zero-Shot) | Vision-SR1  | Improvement |
 |--------|---------------------|----------------------|-------------|
-| **True Accuracy** | 64% | 72% | **+8.0%** ✅ |
+| **True Accuracy** | 64% | 72% | **+8.0%**  |
 | **Reasoning Style** | *Intuitive / "Lazy"* — Tends to guess based on text labels; skips algebraic steps | *Systematic / "The Engineer"* — Explicitly states theorems (e.g., "Tangent-Secant Theorem") and solves step-by-step | High Rigor |
 | **Hallucination Rate** | *Medium* — Invents numbers or relationships when confused | *Low* — Uses the `<scan>` tag to anchor itself. Rarely invents data, though still struggles with complex 3D visual topology | Grounded |
 | **Format Discipline** | *Low* — Often outputs conversational text or inconsistent LaTeX | *High* — Learned to adhere to the `<think>` → `<answer>` format strictly, enabling automated parsing | Automated |
