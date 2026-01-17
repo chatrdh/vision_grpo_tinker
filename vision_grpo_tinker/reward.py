@@ -1,6 +1,23 @@
 import re
-from grader import grade, extract_answer
+import math
+from fractions import Fraction
 from typing import List, Dict, Any, Optional, Tuple
+
+# Import grader functions - some may fail if sympy not available
+try:
+    from grader import grade, extract_answer, _normalize, are_equal_under_sympy
+    GRADER_AVAILABLE = True
+except ImportError:
+    # Fallback if grader dependencies not installed
+    GRADER_AVAILABLE = False
+    def grade(model_answer, gt_answer, fast=True):
+        return model_answer.strip().lower() == gt_answer.strip().lower()
+    def extract_answer(passage):
+        return None
+    def _normalize(expr):
+        return expr.strip().lower() if expr else None
+    def are_equal_under_sympy(a, b):
+        return False
 
 # --- Configuration: Visual Keywords with Weights ---
 # Keywords are weighted based on how strongly they indicate actual visual grounding
@@ -50,6 +67,219 @@ def extract_xml_tag(text: str, tag: str) -> Optional[str]:
     pattern = f"<{tag}>(.*?)</{tag}>"
     match = re.search(pattern, text, re.DOTALL)
     return match.group(1).strip() if match else None
+
+
+def normalize_numeric_answer(text: str) -> str:
+    r"""
+    Strip non-numeric characters from an answer string while preserving:
+    - Digits (0-9)
+    - Decimal points (.)
+    - Fractions (/)
+    - Negative signs (-)
+    - Plus signs (+)
+    - LaTeX elements like \sqrt, \frac, etc.
+    
+    This helps match answers like "45 degrees" to "45" or "$12.50" to "12.50".
+    
+    Args:
+        text: The extracted answer string
+        
+    Returns:
+        str: Cleaned string, or original text if no numeric content found
+    """
+    if not text:
+        return text
+    
+    text = text.strip()
+    
+    # First, check if it looks like a LaTeX expression (keep as-is for sympy)
+    if any(s in text for s in ['\\frac', '\\sqrt', 'frac{', 'sqrt{']):
+        # Normalize LaTeX spacing: remove spaces around elements
+        text = re.sub(r'\s+', '', text)
+        # Normalize curly braces
+        text = text.replace('{ ', '{').replace(' }', '}')
+        return text
+    
+    # Remove common units and suffixes
+    text = re.sub(r'\s*(degrees?|°|ft²?|cm²?|m²?|in²?|yd²?|sq\.?\s*\w+|square\s*\w+)$', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'\s*(ft|cm|m|mm|km|in|yd|mi|miles?)$', '', text, flags=re.IGNORECASE)
+    
+    # Keep only: digits, decimal point, fraction slash, minus, plus
+    cleaned = re.sub(r'[^\d.\-+/]', '', text)
+    
+    # If we extracted something meaningful, return it
+    # Otherwise return the original (might be a letter answer like "A" or "B")
+    if cleaned and any(c.isdigit() for c in cleaned):
+        return cleaned
+    
+    return text.strip()
+
+
+def normalize_latex_answer(text: str) -> str:
+    """
+    Normalize LaTeX expressions for comparison.
+    Handles spacing differences and common variations.
+    """
+    if not text:
+        return text
+    
+    # Remove all spaces
+    text = re.sub(r'\s+', '', text)
+    
+    # Normalize sqrt: \sqrt { 3 } -> \sqrt{3}
+    text = re.sub(r'\\sqrt\s*\{\s*', r'\\sqrt{', text)
+    text = re.sub(r'\s*\}', '}', text)
+    
+    # Normalize frac: \frac { 4 } { 11 } -> \frac{4}{11}
+    text = re.sub(r'\\frac\s*\{\s*', r'\\frac{', text)
+    
+    # Normalize mixed numbers: 4 \frac{4}{11} -> 4+\frac{4}{11} for evaluation
+    # Match: integer followed by \frac
+    text = re.sub(r'^(\d+)\s*\\frac', r'\1+\\frac', text)
+    
+    return text
+
+
+def try_parse_numeric(text: str) -> Optional[float]:
+    """
+    Try to parse text as a numeric value.
+    Handles fractions, decimals, LaTeX fractions, and mixed numbers.
+    """
+    if not text:
+        return None
+    
+    text = text.strip()
+    
+    try:
+        # Direct float
+        return float(text)
+    except ValueError:
+        pass
+    
+    # Try simple fraction (e.g., "3/4")
+    if '/' in text and '\\' not in text:
+        try:
+            parts = text.split('/')
+            if len(parts) == 2:
+                return float(Fraction(int(float(parts[0])), int(float(parts[1]))))
+        except (ValueError, ZeroDivisionError):
+            pass
+    
+    # Try LaTeX fraction: \frac{48}{11} or \\frac{48}{11}
+    frac_match = re.match(r'\\*frac\s*\{?\s*(\d+)\s*\}?\s*\{?\s*(\d+)\s*\}?', text)
+    if frac_match:
+        try:
+            num = int(frac_match.group(1))
+            denom = int(frac_match.group(2))
+            return float(Fraction(num, denom))
+        except (ValueError, ZeroDivisionError):
+            pass
+    
+    # Try mixed number (e.g., "4 3/4")
+    mixed_match = re.match(r'^(\d+)\s+(\d+)/(\d+)$', text)
+    if mixed_match:
+        try:
+            whole = int(mixed_match.group(1))
+            num = int(mixed_match.group(2))
+            denom = int(mixed_match.group(3))
+            return float(whole + Fraction(num, denom))
+        except (ValueError, ZeroDivisionError):
+            pass
+    
+    # Try LaTeX mixed number: "4 \frac{4}{11}" or "4\frac{4}{11}"
+    latex_mixed_match = re.match(r'^(\d+)\s*\\*frac\s*\{?\s*(\d+)\s*\}?\s*\{?\s*(\d+)\s*\}?', text)
+    if latex_mixed_match:
+        try:
+            whole = int(latex_mixed_match.group(1))
+            num = int(latex_mixed_match.group(2))
+            denom = int(latex_mixed_match.group(3))
+            return float(whole + Fraction(num, denom))
+        except (ValueError, ZeroDivisionError):
+            pass
+    
+    return None
+
+
+def are_numerically_equivalent(a: str, b: str, rel_tol: float = 1e-4) -> bool:
+    """
+    Check if two answers are numerically equivalent.
+    Handles fractions, decimals, and simple expressions.
+    """
+    val_a = try_parse_numeric(a)
+    val_b = try_parse_numeric(b)
+    
+    if val_a is not None and val_b is not None:
+        return math.isclose(val_a, val_b, rel_tol=rel_tol)
+    
+    return False
+
+
+def grade_answer_lenient(model_answer: str, ground_truth: str) -> bool:
+    """
+    More lenient answer grading that handles common equivalent forms.
+    
+    Priority:
+    1. Standard grade() - uses mathd normalization + sympy
+    2. Normalized comparison (strip units like ft, cm, degrees)
+    3. Numeric equivalence (fraction/decimal conversion)
+    4. LaTeX normalized comparison
+    5. Sympy equivalence on normalized forms
+    """
+    if not model_answer or not ground_truth:
+        return False
+    
+    # 1. Try standard grader first (fast mode)
+    try:
+        if grade(model_answer, ground_truth, fast=True):
+            return True
+    except Exception:
+        pass
+    
+    # 2. Try normalized comparison (strips units like "78 ft" -> "78")
+    norm_model_numeric = normalize_numeric_answer(model_answer)
+    norm_truth_numeric = normalize_numeric_answer(ground_truth)
+    if norm_model_numeric == norm_truth_numeric:
+        return True
+    
+    # 3. Try numeric equivalence (handles 0.96 vs 24/25, 4 4/11 vs 48/11)
+    if are_numerically_equivalent(norm_model_numeric, norm_truth_numeric):
+        return True
+    if are_numerically_equivalent(model_answer, ground_truth):
+        return True
+    
+    # 4. Try LaTeX normalized comparison
+    norm_model = normalize_latex_answer(model_answer)
+    norm_truth = normalize_latex_answer(ground_truth)
+    
+    if norm_model and norm_truth and norm_model == norm_truth:
+        return True
+    
+    # 5. Try grader _normalize and compare
+    try:
+        grader_norm_model = _normalize(model_answer)
+        grader_norm_truth = _normalize(ground_truth)
+        if grader_norm_model and grader_norm_truth and grader_norm_model == grader_norm_truth:
+            return True
+    except Exception:
+        pass
+    
+    # 6. Try sympy equivalence
+    try:
+        if are_equal_under_sympy(norm_model, norm_truth):
+            return True
+    except Exception:
+        pass
+    
+    # 7. Try slow mode with math_verify (more thorough but slower)
+    try:
+        if grade(model_answer, ground_truth, fast=False):
+            return True
+    except Exception:
+        pass
+    
+    return False
+
+
 
 
 def extract_answer_flexible(text: str) -> Tuple[Optional[str], str]:
@@ -245,7 +475,8 @@ def vision_sr1_reward_fn(
             continue
         
         # --- 2. Accuracy Check (Pass 1) ---
-        is_correct = grade(answer_content, truth_text)
+        normalized_answer = normalize_numeric_answer(answer_content)
+        is_correct = grade_answer_lenient(normalized_answer, truth_text)
         
         if is_correct:
             score += REWARD_WEIGHTS["accuracy"]
@@ -255,7 +486,8 @@ def vision_sr1_reward_fn(
                 blind_answer = blind_answers[idx]
                 if blind_answer is not None:
                     # We have a blind pass answer - use it for visual reward
-                    blind_correct = grade(blind_answer, truth_text)
+                    normalized_blind = normalize_numeric_answer(blind_answer)
+                    blind_correct = grade_answer_lenient(normalized_blind, truth_text)
                     if blind_correct:
                         score += REWARD_WEIGHTS["blind_correct"]
                     else:
@@ -318,6 +550,8 @@ def vision_sr1_reward_fn_detailed(
     blind_results = []
     extraction_methods = []
     has_scan_list = []
+    extracted_answers = []  # Raw extracted answers
+    normalized_answers = []  # Normalized answers for grading
     
     for idx, (pred_text, truth_text) in enumerate(zip(completions, ground_truths)):
         format_reward = 0.0
@@ -360,13 +594,21 @@ def vision_sr1_reward_fn_detailed(
             visual_rewards.append(0.0)
             blind_results.append("no_answer")
             extraction_methods.append("none")
+            extracted_answers.append(None)
+            normalized_answers.append(None)
             continue
         
         # --- 2. Accuracy Check ---
         try:
-            is_correct = grade(answer_content, truth_text)
+            # Normalize answer to strip non-numeric characters (e.g., "45 degrees" -> "45")
+            normalized_answer = normalize_numeric_answer(answer_content)
+            is_correct = grade_answer_lenient(normalized_answer, truth_text)
         except Exception:
+            normalized_answer = answer_content
             is_correct = False
+        
+        extracted_answers.append(answer_content)
+        normalized_answers.append(normalized_answer)
         
         if is_correct:
             accuracy_reward = REWARD_WEIGHTS["accuracy"]
@@ -384,7 +626,8 @@ def vision_sr1_reward_fn_detailed(
                                            vs * REWARD_WEIGHTS["visual_score_scale"])
                 elif blind_answer is not None:
                     try:
-                        blind_correct = grade(blind_answer, truth_text)
+                        normalized_blind = normalize_numeric_answer(blind_answer)
+                        blind_correct = grade_answer_lenient(normalized_blind, truth_text)
                         if blind_correct:
                             visual_reward = REWARD_WEIGHTS["blind_correct"]
                             blind_result = "correct"
@@ -420,6 +663,8 @@ def vision_sr1_reward_fn_detailed(
         'blind_results': blind_results,
         'extraction_methods': extraction_methods,
         'has_scan': has_scan_list,
+        'extracted_answers': extracted_answers,
+        'normalized_answers': normalized_answers,
     }
 
 
